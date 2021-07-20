@@ -70,6 +70,7 @@ class TestBuild:
 
         build = BuildFactory()
         build.plan.flows = "test"
+
         try:
             build.run()
         finally:

@@ -29,7 +29,7 @@ describe('<ErrorBoundary />', () => {
     );
 
     expect(queryByText('child')).toBeNull();
-    expect(getByText('¯\\_(ツ)_/¯', { exact: false })).toBeVisible();
+    expect(getByText('Yikes!', { exact: false })).toBeVisible();
   });
 });
 

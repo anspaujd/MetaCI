@@ -14,13 +14,4 @@ def trigger_dependent_builds(sender, **kwargs):
         source_plan_repo=build.planrepo
     )
     for trigger in triggers:
-        try:
-            trigger.fire(build)
-        except Exception as e:
-            build.log += (
-                f"Could not trigger plan {trigger.target_plan_repo} ({trigger.branch} branch): "
-                f"{e.__class__.__name__} {str(e)}"
-            )
-            build.save()
-            # Intentionally swallow the exception,
-            # so that we don't error the trigger build or block other triggers.
+        trigger.fire(build)

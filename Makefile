@@ -35,5 +35,4 @@ update-deps:
 	pip-compile --upgrade --allow-unsafe requirements/dev.in
 
 dev-install:
-	pip install pip-tools
 	pip-sync requirements/*.txt
