@@ -36,7 +36,6 @@ from metaci.cumulusci.config import MetaCIUniversalConfig
 from metaci.cumulusci.keychain import MetaCIProjectKeychain
 from metaci.cumulusci.logger import init_logger
 from metaci.release.utils import (
-    send_release_webhook,
     send_start_webhook,
     send_stop_webhook,
 )
@@ -88,7 +87,7 @@ jinja2_env = ImmutableSandboxedEnvironment()
 
 
 class GnarlyEncoder(DjangoJSONEncoder):
-    """ A Very Gnarly Encoder that serializes a repr() if it can't get anything else.... """
+    """A Very Gnarly Encoder that serializes a repr() if it can't get anything else...."""
 
     def default(self, obj):  # pylint: disable=W0221, E0202
         try:
@@ -333,11 +332,8 @@ class Build(models.Model):
 
             # Look up or spin up the org
             org_config = self.get_org(project_config)
-            if (
-                self.org and self.org.name and self.org.name.lower() == "packaging"
-            ):  # Calling for any actions taken against packaging org
+            if self.plan.change_traffic_control:
                 send_start_webhook(
-                    project_config,
                     self.release,
                     self.plan.role,
                     self.org.configuration_item,
@@ -412,9 +408,20 @@ class Build(models.Model):
             )
             if org_config.created:
                 self.delete_org(org_config)
+
             self.logger = init_logger(self)
             self.logger.error(str(e))
             self.delete_build_dir()
+            if self.plan.change_traffic_control:
+                try:
+                    send_stop_webhook(
+                        self.release,
+                        self.plan.role,
+                        self.org.configuration_item,
+                        "Failed - no impact",
+                    )
+                except Exception as err:
+                    self.logger.error(str(err))
             self.flush_log()
             return
 
@@ -424,37 +431,18 @@ class Build(models.Model):
             self.delete_org(org_config)
 
         self.delete_build_dir()
-        self.flush_log()
-
-        if self.plan.role == "release":
-            try:
-                send_release_webhook(
-                    project_config, self.release, self.org.configuration_item
-                )
-            except Exception as err:
-                message = f"Error while sending release webhook: {err}"
-                self.logger.error(message)
-                set_build_info(
-                    build, status="error", exception=message, time_end=timezone.now()
-                )
-                return
-        if (
-            self.org and self.org.name and self.org.name.lower() == "packaging"
-        ):  # Calling for any actions taken against packaging org
+        if self.plan.change_traffic_control:
             try:
                 send_stop_webhook(
-                    project_config,
                     self.release,
                     self.plan.role,
                     self.org.configuration_item,
+                    "Implemented - per plan"
                 )
             except Exception as err:
-                message = f"Error while sending implementation stop step webhook: {err}"
-                self.logger.error(message)
-                set_build_info(
-                    build, status="error", exception=message, time_end=timezone.now()
-                )
+                self.logger.error(str(err))
                 return
+        self.flush_log()
 
         if self.plan.role == "qa":
             set_build_info(
@@ -871,7 +859,7 @@ class FlowTaskManager(models.Manager):
 
 
 class FlowTask(models.Model):
-    """ A FlowTask holds the result of a task execution during a BuildFlow. """
+    """A FlowTask holds the result of a task execution during a BuildFlow."""
 
     time_start = models.DateTimeField(null=True, blank=True)
     time_end = models.DateTimeField(null=True, blank=True)
