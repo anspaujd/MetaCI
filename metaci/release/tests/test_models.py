@@ -89,7 +89,6 @@ class TestRelease:
             "start_date_offset": 0,
         }
         release = Release(
-            repo=RepositoryFactory(default_implementation_steps=[release_step]),
             change_case_template=ChangeCaseTemplate(),
         )
         default_step = DefaultImplementationStep(**wrong_step)
