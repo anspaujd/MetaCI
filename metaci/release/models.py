@@ -1,4 +1,5 @@
 import datetime
+from typing import Optional
 
 from django.db import models
 from django.utils import timezone
@@ -10,6 +11,25 @@ from pydantic import BaseModel
 
 from metaci.plan.models import PlanRepository
 from metaci.release.utils import update_release_from_github
+
+
+class ReleaseCohort(models.Model):
+    name = models.CharField(_("name"), max_length=255)
+    status_choices = [
+        ("Planned", "Planned"),
+        ("Active", "Active"),
+        ("Canceled", "Canceled"),
+    ]
+    status = models.CharField(
+        max_length=9,
+        choices=status_choices,
+        default="Planned",
+    )
+    merge_freeze_start = models.DateTimeField(_("Merge Freeze Start Time"))
+    merge_freeze_end = models.DateTimeField(_("Merge Freeze End Time"))
+
+    def __str__(self):
+        return self.name
 
 
 class ChangeCaseTemplate(models.Model):
@@ -27,7 +47,9 @@ class ImplementationStep(models.Model):
     plan = models.ForeignKey(
         "plan.Plan", on_delete=models.CASCADE, related_name="implementation_steps"
     )
+
     start_time = models.DateTimeField(_("start_time"))
+    push_time = models.DateTimeField(_("push_time"), null=True, blank=True)
     stop_time = models.DateTimeField(_("stop_time"))
     external_id = models.CharField(
         _("external id"), max_length=255, null=True, blank=True
@@ -51,6 +73,7 @@ def get_default_production_date():
 
 class DefaultImplementationStep(BaseModel):
     start_date_offset: int = 0
+    push_time: Optional[int] = None
     start_time: int
     duration: int
     role: str
@@ -67,12 +90,18 @@ class DefaultImplementationStep(BaseModel):
     def end(self, start):
         return start + datetime.timedelta(hours=self.duration)
 
+    def _push_time(self, start):
+        if self.push_time is None:
+            return None
+        return timezone.make_aware(
+            datetime.datetime.combine(start.date(), datetime.time(self.push_time))
+        )
+
 
 class Release(StatusModel):
     STATUS = Choices("draft", "published", "hidden")
     created = AutoCreatedField(_("created"))
     modified = AutoLastModifiedField(_("modified"))
-
     repo = models.ForeignKey(
         "repository.Repository", on_delete=models.CASCADE, related_name="releases"
     )
@@ -124,6 +153,13 @@ class Release(StatusModel):
         null=False,
         blank=False,
     )
+    release_cohort = models.ForeignKey(
+        "release.ReleaseCohort",
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        default=None,
+    )
     change_case_link = models.CharField(
         _("change case ID"), max_length=1024, null=True, blank=True
     )
@@ -162,9 +198,11 @@ class Release(StatusModel):
                 pass
             else:
                 start = step.start(self)
+                push = step._push_time(start)
                 ImplementationStep(
                     release=self,
                     plan=planrepo.plan,
+                    push_time=push,
                     start_time=start,
                     stop_time=step.end(start),
                 ).save()

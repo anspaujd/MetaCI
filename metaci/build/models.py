@@ -21,7 +21,6 @@ from cumulusci.salesforce_api.exceptions import MetadataComponentFailure
 from cumulusci.utils import elementtree_parse_file
 from django.apps import apps
 from django.conf import settings
-from django.contrib.postgres.fields import JSONField
 from django.core.exceptions import ObjectDoesNotExist
 from django.core.serializers.json import DjangoJSONEncoder
 from django.db import models
@@ -326,10 +325,6 @@ class Build(models.Model):
             # Initialize the project config
             project_config = self.get_project_config()
 
-            # Set the sentry context for build errors
-            sentry_environment = "metaci"
-            project_config.config["sentry_environment"] = sentry_environment
-
             # Look up or spin up the org
             org_config = self.get_org(project_config)
             if self.plan.change_traffic_control:
@@ -437,7 +432,7 @@ class Build(models.Model):
                     self.release,
                     self.plan.role,
                     self.org.configuration_item,
-                    "Implemented - per plan"
+                    "Implemented - per plan",
                 )
             except Exception as err:
                 self.logger.error(str(err))
@@ -696,23 +691,39 @@ class BuildFlow(models.Model):
 
     def _get_flow_options(self) -> dict:
         options = {}
+
+        # Set push dates in release notes from the Release object
         if self.build.plan.role == "release" and self.build.release:
             options["github_release_notes"] = {
                 "sandbox_date": self.build.release.sandbox_push_date,
                 "production_date": self.build.release.production_push_date,
             }
+
         if (
-            self.build.plan.role == "push_sandbox" and self.build.release
-        ):  # override lives in MetaCI
-            options["push_sandbox"] = {
+            self.build.plan.role in ("push_sandbox", "push_production")
+            and self.build.release
+        ):
+            # Set version for push task from the Release object
+            task_name = (
+                "push_all"
+                if self.build.plan.role == "push_production"
+                else "push_sandbox"
+            )
+            options[task_name] = task_options = {
                 "version": f"{self.build.release.version_number}",
             }
-        if (
-            self.build.plan.role == "push_production" and self.build.release
-        ):  # override lives in MetaCI
-            options["push_all"] = {
-                "version": f"{self.build.release.version_number}",
-            }
+            # If there is an implementation step linked to this plan,
+            # set the start_time option based on it.
+            try:
+                implementation_step = self.build.release.implementation_steps.get(
+                    plan__id=self.build.plan.id
+                )
+            except ObjectDoesNotExist:
+                pass
+            else:
+                push_time = implementation_step.push_time
+                if push_time:
+                    task_options["start_time"] = push_time.isoformat()
 
         return options
 
@@ -873,11 +884,11 @@ class FlowTask(models.Model):
         max_length=2048, help_text="dotted path e.g. flow1.flow2.task_name"
     )
     class_path = models.TextField(null=True, blank=True)
-    options = JSONField(null=True, blank=True, encoder=GnarlyEncoder)
-    result = JSONField(null=True, blank=True, encoder=GnarlyEncoder)
-    return_values = JSONField(null=True, blank=True, encoder=GnarlyEncoder)
+    options = models.JSONField(null=True, blank=True, encoder=GnarlyEncoder)
+    result = models.JSONField(null=True, blank=True, encoder=GnarlyEncoder)
+    return_values = models.JSONField(null=True, blank=True, encoder=GnarlyEncoder)
     exception = models.CharField(max_length=255, null=True, blank=True)
-    exception_value = JSONField(null=True, blank=True, encoder=GnarlyEncoder)
+    exception_value = models.JSONField(null=True, blank=True, encoder=GnarlyEncoder)
 
     status = models.CharField(
         max_length=16, choices=FLOW_TASK_STATUSES, default="queued"
